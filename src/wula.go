@@ -24,30 +24,48 @@ type ResponseBlock struct {
 	URL          string
 }
 
+// Global custom HTTP client with short connection timeout and keep-alive disabled
+var customClient = &http.Client{
+	Timeout: 0, // We handle timeout via context
+	Transport: &http.Transport{
+		DisableKeepAlives: true, // Disable keep-alive to reduce TIME_WAIT
+		MaxIdleConns:      0,
+		IdleConnTimeout:   1 * time.Second,
+		// You can also set Dial timeout and other limits if needed:
+		// DialContext: (&net.Dialer{
+		//     Timeout:   1 * time.Second,
+		//     KeepAlive: 0,
+		// }).DialContext,
+	},
+}
+
 func SendRequests(url string, params map[string]string, SLO float64) int {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	// attach SLO as context timeout
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(SLO)*time.Second)
 	defer cancel()
 
-	// configure the request
-	url_values := req.URL.Query()
+	urlValues := req.URL.Query()
 	for k, v := range params {
-		url_values.Add(k, v)
+		urlValues.Add(k, v)
 	}
+	req.URL.RawQuery = urlValues.Encode()
 
-	req.URL.RawQuery = url_values.Encode()
+	// Explicitly close the connection after the request
+	req.Close = true // Alternatively: req.Header.Set("Connection", "close")
 
-	resp, err := http.DefaultClient.Do(req.WithContext(ctx))
+	resp, err := customClient.Do(req.WithContext(ctx))
 	if err != nil {
 		return 500
 	}
 	defer resp.Body.Close()
 	return resp.StatusCode
 }
+
 
 func DelayMicroseconds(us int64) {
 	var tv syscall.Timeval
